@@ -18,6 +18,8 @@
 #include <unistd.h>
 #include <sndfile.h>
 
+int g_samplerate;
+
 static bool process_sf(SNDFILE *infile, Fvad *vad,
     size_t framelen, SNDFILE *outfiles[2], FILE *listfile)
 {
@@ -27,7 +29,14 @@ static bool process_sf(SNDFILE *infile, Fvad *vad,
     int vadres, prev = -1;
     long frames[2] = {0, 0};
     long segments[2] = {0, 0};
+    size_t total_len = 0;
+    double time_sec;
+    int active = 0;
+    int last_state = 0;
+    double last_active_time_sec = -1.0f;
 
+    fprintf(stderr, "framelen: %ld, %.2f sec\n", framelen, framelen / (double)g_samplerate);
+    
     if (framelen > SIZE_MAX / sizeof (double)
             || !(buf0 = malloc(framelen * sizeof *buf0))
             || !(buf1 = malloc(framelen * sizeof *buf1))) {
@@ -48,7 +57,15 @@ static bool process_sf(SNDFILE *infile, Fvad *vad,
         }
 
         if (listfile) {
-            fprintf(listfile, "%d\n", vadres);
+            //fprintf(listfile, "%d\n", vadres);
+            if (vadres == 1 && last_state == 0) {
+                double now_sec = total_len / (double)g_samplerate;
+                last_active_time_sec = now_sec;
+            }
+            if (vadres == 0 && last_state == 1) {
+                double now_sec = total_len / (double)g_samplerate;
+                fprintf(listfile, "%.2f -> %.2f\n", last_active_time_sec, now_sec);
+            }
         }
 
         vadres = !!vadres; // make sure it is 0 or 1
@@ -60,6 +77,9 @@ static bool process_sf(SNDFILE *infile, Fvad *vad,
         frames[vadres]++;
         if (prev != vadres) segments[vadres]++;
         prev = vadres;
+        
+        last_state = vadres;
+        total_len += framelen;
     }
 
     printf("voice detected in %ld of %ld frames (%.2f%%)\n",
@@ -191,6 +211,9 @@ int main(int argc, char *argv[])
         fprintf(stderr, "invalid sample rate: %d Hz\n", in_info.samplerate);
         goto fail;
     }
+
+    g_samplerate = in_info.samplerate;
+    fprintf(stderr, "channels: %d, sample_rate: %d, format %d\n", in_info.channels, in_info.samplerate, in_info.format);
 
     /*
      * open required output files
